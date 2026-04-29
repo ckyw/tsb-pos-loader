@@ -5,12 +5,17 @@ import unittest
 from pathlib import Path
 
 import pandas as pd
+from google.cloud.bigquery import SchemaField
+from google.cloud.bigquery.table import Table
 
-from execution.pos_sales_loader import (
+from bigquery_loader import coerce_dataframe_to_table_schema
+from etl import (
+    HEADER_ROW_INDEX,
     TARGET_COLUMNS,
     detect_header_row,
     parse_int_value,
     read_source_dataframe,
+    resolve_input_file,
     transform_dataframe,
 )
 
@@ -44,7 +49,7 @@ class PosSalesLoaderTests(unittest.TestCase):
                     "매장코드_매출일자_상품코드": "001_20260428_ABC",
                     "매출일자": "2026-04-28",
                     "상품코드": "ABC",
-                    "지점": "성수점",
+                    "store_name": "성수점",
                     "중분류": "와인",
                     "상품명": "하우스와인",
                     "수량": "2",
@@ -58,7 +63,7 @@ class PosSalesLoaderTests(unittest.TestCase):
                     "매장코드_매출일자_상품코드": "",
                     "매출일자": "",
                     "상품코드": "",
-                    "지점": "합계",
+                    "store_name": "합계",
                     "중분류": "",
                     "상품명": "",
                     "수량": "2",
@@ -81,7 +86,7 @@ class PosSalesLoaderTests(unittest.TestCase):
             [
                 ["리포트", None, None],
                 ["생성일", "2026-04-28", None],
-                ["매장코드_매출일자_상품코드", "매출일자", "상품코드", "지점", "중분류", "상품명", "수량", "총매출액", "할인액", "실매출액", "가액", "부가세"],
+                ["매장코드_매출일자_상품코드", "매출일자", "상품코드", "대분류", "중분류", "상품명", "수량", "총매출액", "할인액", "실매출액", "가액", "부가세"],
                 ["001_20260428_ABC", "2026-04-28", "ABC", "성수점", "와인", "하우스와인", 1, "10,000원", "0원", "10,000원", "9,091원", "909원"],
             ]
         )
@@ -94,6 +99,75 @@ class PosSalesLoaderTests(unittest.TestCase):
             self.assertEqual(detection.sheet_name, "매출데이터")
             self.assertEqual(detection.header_row_index, 2)
             self.assertEqual(source_frame.iloc[0]["상품코드"], "ABC")
+            self.assertEqual(source_frame.iloc[0]["store_name"], "성수점")
+
+    def test_detect_header_row_prefers_sixth_row(self) -> None:
+        rows = [[None] * 12 for _ in range(8)]
+        rows[HEADER_ROW_INDEX] = [
+            "매장코드_매출일자_상품코드",
+            "매출일자",
+            "상품코드",
+            "대분류",
+            "중분류",
+            "상품명",
+            "수량",
+            "총매출액",
+            "할인액",
+            "실매출액",
+            "가액",
+            "부가세",
+        ]
+        workbook = {"Sheet1": pd.DataFrame(rows)}
+        result = detect_header_row(workbook)
+        self.assertEqual(result.header_row_index, HEADER_ROW_INDEX)
+
+    def test_resolve_input_file_prefers_pos_pattern(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pos_dir = Path(tmp_dir) / "pos"
+            pos_dir.mkdir()
+            sample = pos_dir / "tsd0425.xlsx"
+            sample.write_text("x")
+            resolved = resolve_input_file(None, "0425", str(pos_dir))
+            self.assertEqual(resolved, sample)
+
+    def test_coerce_dataframe_to_table_schema_uses_bigquery_integer_type(self) -> None:
+        dataframe = pd.DataFrame(
+            [
+                {
+                    "row_key": "W03552_2026-04-25_900002",
+                    "sales_date": "2026-04-25",
+                    "product_id": "900002",
+                    "store_name": "청계천 삼일빌딩점",
+                    "category_mid": "카페",
+                    "product_name": "아메리카노(H)",
+                    "quantity": "1",
+                    "gross_sales": "3,800원",
+                    "discount_amount": "0원",
+                    "net_sales": "3,800원",
+                    "supply_amount": "3,455원",
+                    "vat_amount": "345원",
+                }
+            ]
+        )
+        table = Table("okpos-sales-load.okpos_sales.okpos_0301")
+        table.schema = [
+            SchemaField("row_key", "STRING"),
+            SchemaField("sales_date", "DATE"),
+            SchemaField("product_id", "INTEGER"),
+            SchemaField("store_name", "STRING"),
+            SchemaField("category_mid", "STRING"),
+            SchemaField("product_name", "STRING"),
+            SchemaField("quantity", "INTEGER"),
+            SchemaField("gross_sales", "INTEGER"),
+            SchemaField("discount_amount", "INTEGER"),
+            SchemaField("net_sales", "INTEGER"),
+            SchemaField("supply_amount", "INTEGER"),
+            SchemaField("vat_amount", "INTEGER"),
+        ]
+        coerced = coerce_dataframe_to_table_schema(dataframe, table)
+        self.assertEqual(int(coerced.loc[0, "product_id"]), 900002)
+        self.assertEqual(int(coerced.loc[0, "gross_sales"]), 3800)
+        self.assertEqual(str(coerced["product_id"].dtype), "int64")
 
 
 if __name__ == "__main__":

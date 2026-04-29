@@ -1,6 +1,6 @@
 # tapshopbar-pos-loader
 
-탭샵바 POS 데일리 매출 엑셀 파일을 로컬 Python CLI로 읽어서, 기존 BigQuery 테이블에 안전하게 append 적재하는 프로젝트입니다.
+탭샵바 POS 데일리 매출 엑셀 파일을 로컬 Python CLI 또는 Streamlit UI로 읽어서, 기존 BigQuery 테이블에 안전하게 append 적재하는 프로젝트입니다.
 
 실제 적재는 `--load`일 때만 수행하며, 기본 동작은 `row_key` 기준 중복을 건너뛰는 `skip` 전략입니다.
 
@@ -41,6 +41,13 @@ BIGQUERY_DATASET=your_dataset
 BIGQUERY_TABLE=your_table
 ```
 
+주의:
+
+- `GCP_PROJECT_ID`에는 프로젝트 ID만 넣습니다. 예: `okpos-sales-load`
+- `BIGQUERY_DATASET`에는 dataset 이름만 넣습니다. 예: `okpos_sales`
+- `BIGQUERY_TABLE`에는 table 이름만 넣습니다. 예: `okpos_0301`
+- `okpos-sales-load.okpos_sales.okpos_0301`처럼 전체 경로를 `BIGQUERY_TABLE`에 넣으면 안 됩니다.
+
 ## 4. Google Cloud 인증 방법
 
 로컬 PC에서 Application Default Credentials를 사용합니다.
@@ -57,9 +64,28 @@ gcloud config set project your-gcp-project-id
 
 ## 5. dry-run 실행 방법
 
+### CLI
+
+권장 구조:
+
+```text
+pos/
+└── tsd0425.xlsx
+```
+
+날짜 suffix 기반 실행:
+
 ```bash
 python load_pos_sales.py \
-  --file samples/sample.xlsx \
+  --date 0425 \
+  --dry-run
+```
+
+명시적 파일 경로로도 실행할 수 있습니다.
+
+```bash
+python load_pos_sales.py \
+  --file pos/tsd0425.xlsx \
   --dry-run
 ```
 
@@ -71,15 +97,35 @@ python load_pos_sales.py \
 - 변환된 행 수
 - 상위 10개 preview
 
+### Streamlit UI
+
+```bash
+streamlit run app.py
+```
+
+브라우저 UI에서 할 수 있는 일:
+
+- POS 엑셀 파일 업로드
+- 변환된 DataFrame 미리보기
+- 필수 컬럼 검증 결과 확인
+- 기존 BigQuery `row_key` 중복 개수 확인
+- 중복 처리 방식 선택
+- 버튼 클릭 시에만 실제 BigQuery 적재
+
 ## 6. 실제 적재 실행 방법
 
 ```bash
 python load_pos_sales.py \
-  --file samples/sample.xlsx \
+  --date 0425 \
   --load
 ```
 
 BigQuery 적재는 `google-cloud-bigquery`의 `load_table_from_dataframe()`와 `WRITE_APPEND`를 사용합니다.
+
+참고:
+
+- `load_table_from_dataframe()` 경로에서 pandas/pyarrow 변환 오류가 발생하면 내부적으로 CSV 기반 fallback 적재를 수행합니다.
+- Streamlit UI는 기본적으로 dry-run 상태이며, `BigQuery에 적재` 버튼을 눌렀을 때만 실제 적재합니다.
 
 ## 7. 중복 처리 옵션 설명
 
@@ -87,7 +133,7 @@ BigQuery 적재는 `google-cloud-bigquery`의 `load_table_from_dataframe()`와 `
 
 ```bash
 python load_pos_sales.py \
-  --file samples/sample.xlsx \
+  --date 0425 \
   --load \
   --duplicate-strategy skip
 ```
@@ -96,7 +142,7 @@ python load_pos_sales.py \
 
 ```bash
 python load_pos_sales.py \
-  --file samples/sample.xlsx \
+  --date 0425 \
   --load \
   --duplicate-strategy replace
 ```
@@ -110,8 +156,10 @@ python load_pos_sales.py \
 - `python --version`이 `3.11.x`인지
 - 엑셀에 아래 원본 컬럼이 모두 있는지
 - 헤더 행이 병합/이미지/특수 형식 때문에 일반 셀로 읽히는지
+- POS 원본 규격상 1~5행은 버리고 6행이 헤더인지
 - `sales_date`가 날짜로 변환 가능한 값인지
 - 기존 BigQuery 테이블의 컬럼 이름, 순서, 타입이 아래 목록과 정확히 같은지
+- 실제 운영 테이블 타입이 문서와 다를 수 있으므로, 현재 로더는 BigQuery 실테이블 스키마를 기준으로 최종 타입을 다시 맞춥니다. 예를 들어 `product_id`가 테이블에서 `INTEGER`면 적재 직전에 숫자형으로 변환합니다.
 
 ## 9. BigQuery 기존 테이블 컬럼 목록
 
@@ -142,6 +190,9 @@ tapshopbar-pos-loader/
 ├── tests/
 │   └── test_pos_sales_loader.py
 ├── .env.example
+├── app.py
+├── bigquery_loader.py
+├── etl.py
 ├── load_pos_sales.py
 ├── README.md
 └── requirements.txt
@@ -153,3 +204,4 @@ tapshopbar-pos-loader/
 - `loaded_at`, `source_file_name`은 적재하지 않습니다.
 - 샘플 엑셀 파일은 현재 저장소에 포함되어 있지 않으므로 `samples/sample.xlsx`는 사용자가 배치해야 합니다.
 - `google-cloud-bigquery` 최신 지원 범위를 고려해 Python 3.11 환경을 권장합니다.
+- 현재 확인한 POS 샘플 규격은 `.xls` 또는 `.xlsx` 모두 허용하며, 기본적으로 `pos/tsd{date}.xlsx` 또는 `pos/tsd{date}.xls`를 찾습니다.

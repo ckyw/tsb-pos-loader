@@ -6,7 +6,7 @@ Read a Tapshopbar POS Excel file, normalize it to the fixed BigQuery schema, and
 
 ## Inputs
 
-- POS `.xlsx` file path
+- POS `.xlsx` or `.xls` file path, or `pos/tsd{date}` pattern
 - Environment variables:
   - `GCP_PROJECT_ID`
   - `BIGQUERY_DATASET`
@@ -37,16 +37,17 @@ Read a Tapshopbar POS Excel file, normalize it to the fixed BigQuery schema, and
 
 ## SOP
 
-1. Detect the header row by scanning every sheet for the expected Korean source headers.
-2. Remove blank rows and total rows such as `합계`, `총계`.
-3. Keep only the source columns mapped to the existing BigQuery schema.
-4. Normalize types:
+1. Prefer the 6th row as the header row because rows 1~5 are report metadata in the current POS format.
+2. Detect the header row by scanning every sheet and supporting header aliases such as `지점` or `대분류` for store name.
+3. Remove blank rows and total rows such as `합계`, `총계`.
+4. Keep only the source columns mapped to the existing BigQuery schema.
+5. Normalize types:
    - `sales_date` -> DATE-compatible
    - `row_key`, `product_id`, text fields -> STRING
    - `quantity`, amount fields -> INTEGER
-5. In `--dry-run`, print detection info and a preview only.
-6. In `--load`, validate the existing BigQuery schema before append.
-7. Deduplicate by `row_key`:
+6. In `--dry-run`, print detection info and a preview only.
+7. In `--load`, validate the existing BigQuery schema before append.
+8. Deduplicate by `row_key`:
    - `skip`: do not append existing keys
    - `replace`: delete existing keys, then append the new rows
 
