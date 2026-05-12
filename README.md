@@ -39,7 +39,8 @@ cp .env.example .env
 ```env
 GCP_PROJECT_ID=your-gcp-project-id
 BIGQUERY_DATASET=your_dataset
-BIGQUERY_TABLE=your_table
+BIGQUERY_TABLE=your_default_pos_table
+SD_BIGQUERY_TABLE=your_sd_pos_table
 ```
 
 주의:
@@ -47,6 +48,7 @@ BIGQUERY_TABLE=your_table
 - `GCP_PROJECT_ID`에는 프로젝트 ID만 넣습니다. 예: `okpos-sales-load`
 - `BIGQUERY_DATASET`에는 dataset 이름만 넣습니다. 예: `okpos_sales`
 - `BIGQUERY_TABLE`에는 table 이름만 넣습니다. 예: `okpos_0301_partitioned`
+- `SD_BIGQUERY_TABLE`에는 SD POS table 이름만 넣습니다. 예: `sdpos_0401`
 - `okpos-sales-load.okpos_sales.okpos_0301_partitioned`처럼 전체 경로를 `BIGQUERY_TABLE`에 넣으면 안 됩니다.
 
 ## 4. Google Cloud 인증 방법
@@ -108,6 +110,7 @@ streamlit run app.py
 
 - POS 엑셀 파일 업로드
 - 기존 POS / 대체 POS 포맷 자동 감지
+- `기존 POS` / `SD POS` 영역 분리
 - 변환된 DataFrame 미리보기
 - 필수 컬럼 검증 결과 확인
 - 기존 BigQuery `row_key` 중복 개수 확인
@@ -119,6 +122,7 @@ streamlit run app.py
 ```bash
 python load_pos_sales.py \
   --date 0425 \
+  --target default_pos \
   --load
 ```
 
@@ -129,6 +133,7 @@ BigQuery 적재는 `google-cloud-bigquery`의 `load_table_from_dataframe()`와 `
 - `load_table_from_dataframe()` 경로에서 pandas/pyarrow 변환 오류가 발생하면 내부적으로 CSV 기반 fallback 적재를 수행합니다.
 - Streamlit UI는 기본적으로 dry-run 상태이며, `BigQuery에 적재` 버튼을 눌렀을 때만 실제 적재합니다.
 - 대체 POS 포맷은 `row_key` 생성, `product_id` 숫자화, `가액/부가세` 반올림 정수화 규칙을 사용합니다.
+- SD POS는 별도 테이블 `SD_BIGQUERY_TABLE`로 적재됩니다.
 
 ## 7. 중복 처리 옵션 설명
 
@@ -137,6 +142,7 @@ BigQuery 적재는 `google-cloud-bigquery`의 `load_table_from_dataframe()`와 `
 ```bash
 python load_pos_sales.py \
   --date 0425 \
+  --target default_pos \
   --load \
   --duplicate-strategy skip
 ```
@@ -146,6 +152,7 @@ python load_pos_sales.py \
 ```bash
 python load_pos_sales.py \
   --date 0425 \
+  --target default_pos \
   --load \
   --duplicate-strategy replace
 ```
@@ -155,6 +162,7 @@ python load_pos_sales.py \
 ## 8. 에러 발생 시 확인할 사항
 
 - `.env`에 `GCP_PROJECT_ID`, `BIGQUERY_DATASET`, `BIGQUERY_TABLE`가 모두 설정되었는지
+- SD POS 적재 시 `.env`에 `SD_BIGQUERY_TABLE`도 설정되었는지
 - `gcloud auth application-default login`이 완료되었는지
 - `python --version`이 `3.11.x`인지
 - 엑셀에 아래 원본 컬럼이 모두 있는지
@@ -210,3 +218,4 @@ tapshopbar-pos-loader/
 - `google-cloud-bigquery` 최신 지원 범위를 고려해 Python 3.11 환경을 권장합니다.
 - 현재 확인한 POS 샘플 규격은 `.xls` 또는 `.xlsx` 모두 허용하며, 기본적으로 `pos/tsd{date}.xlsx` 또는 `pos/tsd{date}.xls`를 찾습니다.
 - 대체 POS 통합 규칙과 staging 스키마 제안은 [directives/alternate_pos_integration.md](/Users/ckp/vibecoding/load-pos-sales/directives/alternate_pos_integration.md)에 정리되어 있습니다.
+- 현재 기본 POS 적재 테이블은 `BIGQUERY_TABLE`, SD POS 적재 테이블은 `SD_BIGQUERY_TABLE`을 사용합니다.

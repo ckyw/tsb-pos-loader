@@ -5,12 +5,14 @@ import sys
 
 from dotenv import load_dotenv
 
-from bigquery_loader import load_to_bigquery
+from bigquery_loader import TARGET_DEFAULT_POS, TARGET_SD_POS, load_to_bigquery
 from etl import (
     DEFAULT_POS_DIR,
     PosLoaderError,
     print_dry_run_summary,
     resolve_input_file,
+    SOURCE_SYSTEM_ALTERNATE,
+    SOURCE_SYSTEM_LEGACY,
     transform_uploaded_source,
 )
 
@@ -38,6 +40,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="skip",
         help="How to handle row_keys that already exist in BigQuery",
     )
+    parser.add_argument(
+        "--target",
+        choices=(TARGET_DEFAULT_POS, TARGET_SD_POS),
+        default=TARGET_DEFAULT_POS,
+        help="BigQuery target to load into",
+    )
     return parser
 
 
@@ -61,11 +69,18 @@ def main() -> None:
             print(f"[source] staging_rows={len(result.staging_frame)}")
             print("[source] alternate_pos_assumption=rounded monetary fields and generated row_key/product_id mapping applied")
 
+        if args.target == TARGET_DEFAULT_POS and result.source_system != SOURCE_SYSTEM_LEGACY:
+            raise PosLoaderError("기존 POS 타깃에는 기존 POS 포맷 파일만 적재할 수 있습니다.")
+        if args.target == TARGET_SD_POS and result.source_system != SOURCE_SYSTEM_ALTERNATE:
+            raise PosLoaderError("SD POS 타깃에는 SD POS 포맷 파일만 적재할 수 있습니다.")
+
         if args.load:
             loaded_count, duplicate_count, deleted_count = load_to_bigquery(
                 transformed,
                 duplicate_strategy=args.duplicate_strategy,
+                target_key=args.target,
             )
+            print(f"[bigquery] target={args.target}")
             print(f"[bigquery] duplicate_strategy={args.duplicate_strategy}")
             print(f"[bigquery] existing_row_keys={duplicate_count}")
             if args.duplicate_strategy == "replace":

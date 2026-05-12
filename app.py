@@ -5,83 +5,120 @@ from pathlib import Path
 
 import streamlit as st
 
-from bigquery_loader import count_existing_row_keys, load_to_bigquery
-from etl import PosLoaderError, SOURCE_SYSTEM_ALTERNATE, transform_uploaded_source
+from bigquery_loader import TARGET_DEFAULT_POS, TARGET_LABELS, TARGET_SD_POS, count_existing_row_keys, load_to_bigquery
+from etl import PosLoaderError, SOURCE_SYSTEM_ALTERNATE, SOURCE_SYSTEM_LEGACY, transform_uploaded_source
 
 
 st.set_page_config(page_title="POS BigQuery Loader", page_icon=":bar_chart:", layout="wide")
 st.title("Tapshopbar POS BigQuery Loader")
 st.caption("엑셀 업로드, 변환 미리보기, 중복 확인, BigQuery 적재를 브라우저에서 처리합니다.")
 
-uploaded_file = st.file_uploader(
-    "POS 엑셀 파일 업로드",
-    type=["xlsx", "xls"],
-    help="일일 POS 엑셀 파일을 업로드하세요.",
-)
 
-duplicate_strategy = st.selectbox(
-    "중복 처리 방식",
-    options=["skip", "replace"],
-    index=0,
-    help="기본값은 dry-run이며, 아래 버튼을 누를 때만 실제 BigQuery 적재가 수행됩니다.",
-)
+def render_pos_section(
+    title: str,
+    target_key: str,
+    expected_source_system: str,
+    uploader_help: str,
+) -> None:
+    st.subheader(title)
+    st.caption(f"적재 대상 테이블: `{TARGET_LABELS[target_key]}`")
 
-if uploaded_file is None:
-    st.info("파일을 업로드하면 변환 결과와 BigQuery 중복 정보를 확인할 수 있습니다.")
-    st.stop()
+    uploaded_file = st.file_uploader(
+        f"{title} 엑셀 파일 업로드",
+        type=["xlsx", "xls"],
+        help=uploader_help,
+        key=f"uploader_{target_key}",
+    )
 
-try:
-    suffix = Path(uploaded_file.name).suffix or ".xlsx"
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp_file:
-        temp_file.write(uploaded_file.getbuffer())
-        temp_path = Path(temp_file.name)
+    duplicate_strategy = st.selectbox(
+        f"{title} 중복 처리 방식",
+        options=["skip", "replace"],
+        index=0,
+        help="기본값은 dry-run이며, 아래 버튼을 누를 때만 실제 BigQuery 적재가 수행됩니다.",
+        key=f"dup_{target_key}",
+    )
+
+    if uploaded_file is None:
+        st.info("파일을 업로드하면 변환 결과와 BigQuery 중복 정보를 확인할 수 있습니다.")
+        return
 
     try:
-        result = transform_uploaded_source(temp_path)
-        detection = result.detection
-        dataframe = result.transformed_frame
-    finally:
-        temp_path.unlink(missing_ok=True)
+        suffix = Path(uploaded_file.name).suffix or ".xlsx"
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp_file:
+            temp_file.write(uploaded_file.getbuffer())
+            temp_path = Path(temp_file.name)
 
-    st.success("파일 분석과 변환이 완료되었습니다. 현재 상태는 dry-run입니다.")
+        try:
+            result = transform_uploaded_source(temp_path)
+            detection = result.detection
+            dataframe = result.transformed_frame
+        finally:
+            temp_path.unlink(missing_ok=True)
 
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("감지된 시트", detection.sheet_name)
-    col2.metric("감지된 헤더 행", str(detection.header_row_index + 1))
-    col3.metric("변환된 행 수", str(len(dataframe)))
-    col4.metric("소스 시스템", detection.source_system)
+        if detection.source_system != expected_source_system:
+            if target_key == TARGET_DEFAULT_POS:
+                raise PosLoaderError("기존 POS 영역에는 기존 POS 포맷 파일만 업로드할 수 있습니다.")
+            raise PosLoaderError("SD POS 영역에는 store_sales_by_product 형식 파일만 업로드할 수 있습니다.")
 
-    st.subheader("필수 컬럼 검증")
-    st.success("필수 컬럼이 모두 확인되었습니다.")
-    st.write(", ".join(detection.matched_columns))
+        st.success("파일 분석과 변환이 완료되었습니다. 현재 상태는 dry-run입니다.")
 
-    if detection.source_system == SOURCE_SYSTEM_ALTERNATE:
-        st.warning(
-            "대체 POS 포맷으로 감지되었습니다. "
-            "row_key는 생성 규칙을 사용하고, product_id는 상품코드/바코드 기반 숫자화 또는 surrogate id를 사용합니다. "
-            "가액/부가세는 반올림 정수로 적재됩니다."
-        )
-        if result.staging_frame is not None:
-            st.subheader("Staging 미리보기")
-            st.dataframe(result.staging_frame, use_container_width=True, hide_index=True)
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("감지된 시트", detection.sheet_name)
+        col2.metric("감지된 헤더 행", str(detection.header_row_index + 1))
+        col3.metric("변환된 행 수", str(len(dataframe)))
+        col4.metric("소스 시스템", detection.source_system)
 
-    st.subheader("변환 결과 미리보기")
-    st.dataframe(dataframe, use_container_width=True, hide_index=True)
+        st.subheader("필수 컬럼 검증")
+        st.success("필수 컬럼이 모두 확인되었습니다.")
+        st.write(", ".join(detection.matched_columns))
 
-    st.subheader("BigQuery 중복 확인")
-    duplicate_count = count_existing_row_keys(dataframe)
-    st.info(f"기존 BigQuery와 row_key를 비교한 결과 중복 {duplicate_count}건입니다.")
+        if detection.source_system == SOURCE_SYSTEM_ALTERNATE:
+            st.warning(
+                "SD POS 포맷으로 감지되었습니다. "
+                "row_key는 생성 규칙을 사용하고, product_id는 상품코드/바코드 기반 숫자화 또는 surrogate id를 사용합니다. "
+                "가액/부가세는 반올림 정수로 적재됩니다."
+            )
+            if result.staging_frame is not None:
+                st.subheader("Staging 미리보기")
+                st.dataframe(result.staging_frame, use_container_width=True, hide_index=True)
 
-    if st.button("BigQuery에 적재", type="primary"):
-        loaded_count, existing_count, deleted_count = load_to_bigquery(
-            dataframe,
-            duplicate_strategy=duplicate_strategy,
-        )
-        st.success(f"BigQuery 적재가 완료되었습니다. 적재 행 수: {loaded_count}")
-        st.write(f"중복 row_key 수: {existing_count}")
-        if duplicate_strategy == "replace":
-            st.write(f"삭제 후 재적재한 기존 row 수: {deleted_count}")
-except PosLoaderError as exc:
-    st.error(f"변환 또는 검증 중 문제가 발생했습니다: {exc}")
-except Exception as exc:
-    st.error(f"BigQuery 처리 중 오류가 발생했습니다: {exc}")
+        st.subheader("변환 결과 미리보기")
+        st.dataframe(dataframe, use_container_width=True, hide_index=True)
+
+        st.subheader("BigQuery 중복 확인")
+        duplicate_count = count_existing_row_keys(dataframe, target_key=target_key)
+        st.info(f"대상 BigQuery 테이블과 row_key를 비교한 결과 중복 {duplicate_count}건입니다.")
+
+        if st.button(f"{title} BigQuery에 적재", type="primary", key=f"load_{target_key}"):
+            loaded_count, existing_count, deleted_count = load_to_bigquery(
+                dataframe,
+                duplicate_strategy=duplicate_strategy,
+                target_key=target_key,
+            )
+            st.success(f"BigQuery 적재가 완료되었습니다. 적재 행 수: {loaded_count}")
+            st.write(f"중복 row_key 수: {existing_count}")
+            if duplicate_strategy == "replace":
+                st.write(f"삭제 후 재적재한 기존 row 수: {deleted_count}")
+    except PosLoaderError as exc:
+        st.error(f"변환 또는 검증 중 문제가 발생했습니다: {exc}")
+    except Exception as exc:
+        st.error(f"BigQuery 처리 중 오류가 발생했습니다: {exc}")
+
+
+legacy_tab, sd_tab = st.tabs(["기존 POS", "SD POS"])
+
+with legacy_tab:
+    render_pos_section(
+        title="기존 POS",
+        target_key=TARGET_DEFAULT_POS,
+        expected_source_system=SOURCE_SYSTEM_LEGACY,
+        uploader_help="기존 탭샵바 POS 엑셀 파일을 업로드하세요.",
+    )
+
+with sd_tab:
+    render_pos_section(
+        title="SD POS",
+        target_key=TARGET_SD_POS,
+        expected_source_system=SOURCE_SYSTEM_ALTERNATE,
+        uploader_help="store_sales_by_product 형식의 SD POS 엑셀 파일을 업로드하세요.",
+    )

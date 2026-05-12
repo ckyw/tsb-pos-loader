@@ -1,17 +1,20 @@
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import pandas as pd
 from google.cloud.bigquery import SchemaField
 from google.cloud.bigquery.table import Table
 
-from bigquery_loader import coerce_dataframe_to_table_schema
+from bigquery_loader import TARGET_DEFAULT_POS, TARGET_SD_POS, coerce_dataframe_to_table_schema, resolve_target_table
 from etl import (
     HEADER_ROW_INDEX,
     SOURCE_SYSTEM_ALTERNATE,
+    SOURCE_SYSTEM_LEGACY,
     TARGET_COLUMNS,
     detect_header_row,
     parse_int_value,
@@ -241,6 +244,43 @@ class PosSalesLoaderTests(unittest.TestCase):
             self.assertEqual(result.source_system, SOURCE_SYSTEM_ALTERNATE)
             self.assertIsNotNone(result.staging_frame)
             self.assertEqual(len(result.transformed_frame), 1)
+
+    def test_resolve_target_table_uses_sd_target_env(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "GCP_PROJECT_ID": "okpos-sales-load",
+                "BIGQUERY_DATASET": "okpos_sales",
+                "BIGQUERY_TABLE": "okpos_0301_partitioned",
+                "SD_BIGQUERY_TABLE": "sdpos_0401",
+            },
+            clear=False,
+        ):
+            self.assertEqual(
+                resolve_target_table(TARGET_DEFAULT_POS),
+                ("okpos-sales-load", "okpos_sales", "okpos_0301_partitioned", "okpos-sales-load.okpos_sales.okpos_0301_partitioned"),
+            )
+            self.assertEqual(
+                resolve_target_table(TARGET_SD_POS),
+                ("okpos-sales-load", "okpos_sales", "sdpos_0401", "okpos-sales-load.okpos_sales.sdpos_0401"),
+            )
+
+    def test_transform_uploaded_source_legacy_stays_legacy(self) -> None:
+        sheet = pd.DataFrame(
+            [
+                ["리포트", None, None],
+                ["생성일", "2026-04-28", None],
+                ["매장코드_매출일자_상품코드", "매출일자", "상품코드", "대분류", "중분류", "상품명", "수량", "총매출액", "할인액", "실매출액", "가액", "부가세"],
+                ["001_20260428_ABC", "2026-04-28", "ABC", "성수점", "와인", "하우스와인", 1, "10,000원", "0원", "10,000원", "9,091원", "909원"],
+            ]
+        )
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "legacy.xlsx"
+            with pd.ExcelWriter(path, engine="openpyxl") as writer:
+                sheet.to_excel(writer, index=False, header=False, sheet_name="매출데이터")
+            result = transform_uploaded_source(path)
+            self.assertEqual(result.source_system, SOURCE_SYSTEM_LEGACY)
+            self.assertIsNone(result.staging_frame)
 
 
 if __name__ == "__main__":

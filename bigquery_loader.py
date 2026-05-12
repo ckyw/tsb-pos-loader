@@ -29,18 +29,32 @@ REQUIRED_TABLE_TYPES = {
     "vat_amount": "INTEGER",
 }
 
+TARGET_DEFAULT_POS = "default_pos"
+TARGET_SD_POS = "sd_pos"
+TARGET_TABLE_ENV = {
+    TARGET_DEFAULT_POS: "BIGQUERY_TABLE",
+    TARGET_SD_POS: "SD_BIGQUERY_TABLE",
+}
+TARGET_LABELS = {
+    TARGET_DEFAULT_POS: "기존 POS",
+    TARGET_SD_POS: "SD POS",
+}
 
-def resolve_target_table() -> tuple[str, str, str, str]:
+
+def resolve_target_table(target_key: str = TARGET_DEFAULT_POS) -> tuple[str, str, str, str]:
     load_dotenv()
     project_id = os.getenv("GCP_PROJECT_ID", "").strip()
     dataset = os.getenv("BIGQUERY_DATASET", "").strip()
-    table = os.getenv("BIGQUERY_TABLE", "").strip()
+    table_env_name = TARGET_TABLE_ENV.get(target_key)
+    if table_env_name is None:
+        raise PosLoaderError(f"지원하지 않는 적재 타깃입니다: {target_key}")
+    table = os.getenv(table_env_name, "").strip()
     missing = [
         name
         for name, value in (
             ("GCP_PROJECT_ID", project_id),
             ("BIGQUERY_DATASET", dataset),
-            ("BIGQUERY_TABLE", table),
+            (table_env_name, table),
         )
         if not value
     ]
@@ -54,21 +68,22 @@ def resolve_target_table() -> tuple[str, str, str, str]:
         )
     if "." in table:
         raise PosLoaderError(
-            "BIGQUERY_TABLE에는 table 이름만 넣어야 합니다. "
+            f"{table_env_name}에는 table 이름만 넣어야 합니다. "
             f"현재 값='{table}', 예시='okpos_0301_partitioned'"
         )
     return project_id, dataset, table, f"{project_id}.{dataset}.{table}"
 
 
-def get_bigquery_client(project_id: str | None = None) -> bigquery.Client:
-    resolved_project_id, _, _, _ = resolve_target_table()
+def get_bigquery_client(project_id: str | None = None, target_key: str = TARGET_DEFAULT_POS) -> bigquery.Client:
+    resolved_project_id, _, _, _ = resolve_target_table(target_key=target_key)
     return bigquery.Client(project=project_id or resolved_project_id)
 
 
 def get_target_table(
     client: bigquery.Client | None = None,
+    target_key: str = TARGET_DEFAULT_POS,
 ) -> tuple[bigquery.Client, bigquery.Table, str]:
-    project_id, _, _, table_fqn = resolve_target_table()
+    project_id, _, _, table_fqn = resolve_target_table(target_key=target_key)
     bq_client = client or bigquery.Client(project=project_id)
     table = bq_client.get_table(table_fqn)
     validate_table_schema(table)
@@ -144,8 +159,11 @@ def fetch_existing_row_keys(
     return existing
 
 
-def count_existing_row_keys(dataframe: pd.DataFrame) -> int:
-    client, _, table_fqn = get_target_table()
+def count_existing_row_keys(
+    dataframe: pd.DataFrame,
+    target_key: str = TARGET_DEFAULT_POS,
+) -> int:
+    client, _, table_fqn = get_target_table(target_key=target_key)
     row_keys = dataframe["row_key"].astype(str).tolist()
     return len(fetch_existing_row_keys(client, table_fqn, row_keys))
 
@@ -175,8 +193,9 @@ def delete_existing_row_keys(
 def load_to_bigquery(
     dataframe: pd.DataFrame,
     duplicate_strategy: str,
+    target_key: str = TARGET_DEFAULT_POS,
 ) -> tuple[int, int, int]:
-    client, table, table_fqn = get_target_table()
+    client, table, table_fqn = get_target_table(target_key=target_key)
     dataframe = coerce_dataframe_to_table_schema(dataframe, table)
 
     row_keys = dataframe["row_key"].astype(str).tolist()
