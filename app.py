@@ -6,7 +6,7 @@ from pathlib import Path
 import streamlit as st
 
 from bigquery_loader import count_existing_row_keys, load_to_bigquery
-from etl import PosLoaderError, read_source_dataframe, transform_dataframe, validate_required_columns
+from etl import PosLoaderError, SOURCE_SYSTEM_ALTERNATE, transform_uploaded_source
 
 
 st.set_page_config(page_title="POS BigQuery Loader", page_icon=":bar_chart:", layout="wide")
@@ -37,22 +37,33 @@ try:
         temp_path = Path(temp_file.name)
 
     try:
-        source_frame, detection = read_source_dataframe(temp_path)
-        validate_required_columns(source_frame)
-        dataframe = transform_dataframe(source_frame)
+        result = transform_uploaded_source(temp_path)
+        detection = result.detection
+        dataframe = result.transformed_frame
     finally:
         temp_path.unlink(missing_ok=True)
 
     st.success("파일 분석과 변환이 완료되었습니다. 현재 상태는 dry-run입니다.")
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     col1.metric("감지된 시트", detection.sheet_name)
     col2.metric("감지된 헤더 행", str(detection.header_row_index + 1))
     col3.metric("변환된 행 수", str(len(dataframe)))
+    col4.metric("소스 시스템", detection.source_system)
 
     st.subheader("필수 컬럼 검증")
     st.success("필수 컬럼이 모두 확인되었습니다.")
     st.write(", ".join(detection.matched_columns))
+
+    if detection.source_system == SOURCE_SYSTEM_ALTERNATE:
+        st.warning(
+            "대체 POS 포맷으로 감지되었습니다. "
+            "row_key는 생성 규칙을 사용하고, product_id는 상품코드/바코드 기반 숫자화 또는 surrogate id를 사용합니다. "
+            "가액/부가세는 반올림 정수로 적재됩니다."
+        )
+        if result.staging_frame is not None:
+            st.subheader("Staging 미리보기")
+            st.dataframe(result.staging_frame, use_container_width=True, hide_index=True)
 
     st.subheader("변환 결과 미리보기")
     st.dataframe(dataframe, use_container_width=True, hide_index=True)

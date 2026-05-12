@@ -39,6 +39,7 @@ Read a Tapshopbar POS Excel file, normalize it to the fixed BigQuery schema, and
 
 1. Prefer the 6th row as the header row because rows 1~5 are report metadata in the current POS format.
 2. Detect the header row by scanning every sheet and supporting header aliases such as `지점` or `대분류` for store name.
+   - Also support the alternate `store_sales_by_product` export with row-1 headers
 3. Remove blank rows and total rows such as `합계`, `총계`.
 4. Keep only the source columns mapped to the existing BigQuery schema.
 5. Normalize types:

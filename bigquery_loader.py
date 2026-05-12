@@ -55,7 +55,7 @@ def resolve_target_table() -> tuple[str, str, str, str]:
     if "." in table:
         raise PosLoaderError(
             "BIGQUERY_TABLE에는 table 이름만 넣어야 합니다. "
-            f"현재 값='{table}', 예시='okpos_0301'"
+            f"현재 값='{table}', 예시='okpos_0301_partitioned'"
         )
     return project_id, dataset, table, f"{project_id}.{dataset}.{table}"
 

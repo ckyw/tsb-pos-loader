@@ -1,6 +1,6 @@
 # tapshopbar-pos-loader
 
-탭샵바 POS 데일리 매출 엑셀 파일을 로컬 Python CLI 또는 Streamlit UI로 읽어서, 기존 BigQuery 테이블에 안전하게 append 적재하는 프로젝트입니다.
+탭샵바 POS 데일리 매출 엑셀 파일을 로컬 Python CLI 또는 Streamlit UI로 읽어서, 기존 BigQuery 테이블에 안전하게 append 적재하는 프로젝트입니다. 현재는 기존 POS 포맷과 별도 지점의 대체 POS 포맷을 모두 감지할 수 있습니다.
 
 실제 적재는 `--load`일 때만 수행하며, 기본 동작은 `row_key` 기준 중복을 건너뛰는 `skip` 전략입니다.
 
@@ -9,6 +9,7 @@
 - POS `.xlsx` 파일을 읽어 기존 BigQuery 스키마에 맞는 DataFrame으로 변환
 - 빈 행, 합계 행 제거
 - 한글 원본 컬럼을 영문 BigQuery 컬럼으로 매핑
+- 포맷별 source adapter로 다른 POS export도 처리
 - `row_key` 기준 중복을 제어하면서 기존 테이블에 append 적재
 
 ## 2. 설치 방법
@@ -45,8 +46,8 @@ BIGQUERY_TABLE=your_table
 
 - `GCP_PROJECT_ID`에는 프로젝트 ID만 넣습니다. 예: `okpos-sales-load`
 - `BIGQUERY_DATASET`에는 dataset 이름만 넣습니다. 예: `okpos_sales`
-- `BIGQUERY_TABLE`에는 table 이름만 넣습니다. 예: `okpos_0301`
-- `okpos-sales-load.okpos_sales.okpos_0301`처럼 전체 경로를 `BIGQUERY_TABLE`에 넣으면 안 됩니다.
+- `BIGQUERY_TABLE`에는 table 이름만 넣습니다. 예: `okpos_0301_partitioned`
+- `okpos-sales-load.okpos_sales.okpos_0301_partitioned`처럼 전체 경로를 `BIGQUERY_TABLE`에 넣으면 안 됩니다.
 
 ## 4. Google Cloud 인증 방법
 
@@ -106,6 +107,7 @@ streamlit run app.py
 브라우저 UI에서 할 수 있는 일:
 
 - POS 엑셀 파일 업로드
+- 기존 POS / 대체 POS 포맷 자동 감지
 - 변환된 DataFrame 미리보기
 - 필수 컬럼 검증 결과 확인
 - 기존 BigQuery `row_key` 중복 개수 확인
@@ -126,6 +128,7 @@ BigQuery 적재는 `google-cloud-bigquery`의 `load_table_from_dataframe()`와 `
 
 - `load_table_from_dataframe()` 경로에서 pandas/pyarrow 변환 오류가 발생하면 내부적으로 CSV 기반 fallback 적재를 수행합니다.
 - Streamlit UI는 기본적으로 dry-run 상태이며, `BigQuery에 적재` 버튼을 눌렀을 때만 실제 적재합니다.
+- 대체 POS 포맷은 `row_key` 생성, `product_id` 숫자화, `가액/부가세` 반올림 정수화 규칙을 사용합니다.
 
 ## 7. 중복 처리 옵션 설명
 
@@ -183,6 +186,7 @@ python load_pos_sales.py \
 ```text
 tapshopbar-pos-loader/
 ├── directives/
+│   ├── alternate_pos_integration.md
 │   └── load_pos_sales.md
 ├── execution/
 │   └── pos_sales_loader.py
@@ -205,3 +209,4 @@ tapshopbar-pos-loader/
 - 샘플 엑셀 파일은 현재 저장소에 포함되어 있지 않으므로 `samples/sample.xlsx`는 사용자가 배치해야 합니다.
 - `google-cloud-bigquery` 최신 지원 범위를 고려해 Python 3.11 환경을 권장합니다.
 - 현재 확인한 POS 샘플 규격은 `.xls` 또는 `.xlsx` 모두 허용하며, 기본적으로 `pos/tsd{date}.xlsx` 또는 `pos/tsd{date}.xls`를 찾습니다.
+- 대체 POS 통합 규칙과 staging 스키마 제안은 [directives/alternate_pos_integration.md](/Users/ckp/vibecoding/load-pos-sales/directives/alternate_pos_integration.md)에 정리되어 있습니다.

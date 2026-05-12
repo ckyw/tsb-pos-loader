@@ -10,9 +10,8 @@ from etl import (
     DEFAULT_POS_DIR,
     PosLoaderError,
     print_dry_run_summary,
-    read_source_dataframe,
     resolve_input_file,
-    transform_dataframe,
+    transform_uploaded_source,
 )
 
 
@@ -55,9 +54,12 @@ def main() -> None:
         if not file_path.exists():
             raise SystemExit(f"입력 파일을 찾을 수 없습니다: {file_path}")
 
-        source_frame, detection = read_source_dataframe(file_path)
-        transformed = transform_dataframe(source_frame)
-        print_dry_run_summary(transformed, detection, file_path)
+        result = transform_uploaded_source(file_path)
+        transformed = result.transformed_frame
+        print_dry_run_summary(transformed, result.detection, file_path)
+        if result.staging_frame is not None:
+            print(f"[source] staging_rows={len(result.staging_frame)}")
+            print("[source] alternate_pos_assumption=rounded monetary fields and generated row_key/product_id mapping applied")
 
         if args.load:
             loaded_count, duplicate_count, deleted_count = load_to_bigquery(
