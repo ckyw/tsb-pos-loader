@@ -1,5 +1,251 @@
 # tapshopbar-pos-loader
 
+A project that reads TapShopBar POS daily sales Excel files via a local Python CLI or Streamlit UI, and safely appends data to an existing BigQuery table. Currently supports auto-detection of both the standard POS format and an alternative POS format used at a separate branch.
+
+Actual loading is only performed when `--load` is specified. The default behavior uses a `skip` strategy that skips duplicates based on `row_key`.
+
+---
+
+## 1. Project Purpose
+
+- Read POS `.xlsx` files and transform them into a DataFrame matching the existing BigQuery schema
+- Remove empty rows and summary rows
+- Map Korean source columns to English BigQuery column names
+- Handle different POS exports via per-format source adapters
+- Append to the existing table while controlling duplicates based on `row_key`
+
+---
+
+## 2. Installation
+
+Python 3.11 is recommended.
+
+```bash
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+If Python 3.11 is not installed on macOS:
+
+```bash
+brew install python@3.11
+```
+
+---
+
+## 3. `.env` Configuration
+
+Create a `.env` file in the project root and fill in the values below.
+
+```bash
+cp .env.example .env
+```
+
+```env
+GCP_PROJECT_ID=your-gcp-project-id
+BIGQUERY_DATASET=your_dataset
+BIGQUERY_TABLE=your_default_pos_table
+SD_BIGQUERY_TABLE=your_sd_pos_table
+```
+
+Notes:
+
+- `GCP_PROJECT_ID` should contain only the project ID, e.g. `okpos-sales-load`
+- `BIGQUERY_DATASET` should contain only the dataset name, e.g. `okpos_sales`
+- `BIGQUERY_TABLE` should contain only the table name, e.g. `okpos_0301_partitioned`
+- `SD_BIGQUERY_TABLE` should contain only the SD POS table name, e.g. `sdpos_0401`
+- Do not put the full path like `okpos-sales-load.okpos_sales.okpos_0301_partitioned` into `BIGQUERY_TABLE`
+
+---
+
+## 4. Google Cloud Authentication
+
+Use Application Default Credentials on your local machine.
+
+```bash
+gcloud auth application-default login
+```
+
+If needed, also set the project:
+
+```bash
+gcloud config set project your-gcp-project-id
+```
+
+---
+
+## 5. Running a Dry Run
+
+### CLI
+
+Recommended directory structure:
+
+```text
+pos/
+└── tsd0425.xlsx
+```
+
+Run using a date suffix:
+
+```bash
+python load_pos_sales.py \
+  --date 0425 \
+  --dry-run
+```
+
+Or specify the file path explicitly:
+
+```bash
+python load_pos_sales.py \
+  --file pos/tsd0425.xlsx \
+  --dry-run
+```
+
+Output includes:
+
+- Detected sheet name
+- Detected header row number
+- Final column list
+- Number of transformed rows
+- Preview of the top 10 rows
+
+### Streamlit UI
+
+```bash
+streamlit run app.py
+```
+
+The browser UI allows you to:
+
+- Upload a POS Excel file
+- Auto-detect standard POS or alternative POS format
+- View separate sections for standard POS and SD POS
+- Preview the transformed DataFrame
+- Validate required columns
+- Check the number of duplicate `row_key` values already in BigQuery
+- Choose a duplicate handling strategy
+- Load to BigQuery only when the load button is clicked
+
+---
+
+## 6. Running an Actual Load
+
+```bash
+python load_pos_sales.py \
+  --date 0425 \
+  --target default_pos \
+  --load
+```
+
+BigQuery loading uses `load_table_from_dataframe()` with `WRITE_APPEND` from `google-cloud-bigquery`.
+
+Notes:
+
+- If a pandas/pyarrow conversion error occurs in the `load_table_from_dataframe()` path, a CSV-based fallback load is performed internally.
+- The Streamlit UI is in dry-run mode by default; actual loading only occurs when the "Load to BigQuery" button is clicked.
+- The alternative POS format uses its own rules for `row_key` generation, `product_id` numeric conversion, and rounding `supply_amount`/`vat_amount` to integers.
+- SD POS data is loaded into a separate table defined by `SD_BIGQUERY_TABLE`.
+
+---
+
+## 7. Duplicate Handling Options
+
+The default strategy is `skip`.
+
+```bash
+python load_pos_sales.py \
+  --date 0425 \
+  --target default_pos \
+  --load \
+  --duplicate-strategy skip
+```
+
+- `skip`: Skips any `row_key` already present in BigQuery and appends only new rows.
+
+```bash
+python load_pos_sales.py \
+  --date 0425 \
+  --target default_pos \
+  --load \
+  --duplicate-strategy replace
+```
+
+- `replace`: Deletes rows in BigQuery that match `row_key` values found in the file, then appends all rows from the file.
+
+---
+
+## 8. Troubleshooting
+
+- Verify that `GCP_PROJECT_ID`, `BIGQUERY_DATASET`, and `BIGQUERY_TABLE` are all set in `.env`
+- For SD POS loads, verify that `SD_BIGQUERY_TABLE` is also set in `.env`
+- Confirm that `gcloud auth application-default login` has been completed
+- Confirm that `python --version` returns `3.11.x`
+- Check that all required source columns are present in the Excel file
+- Check whether the header row is being read correctly as a normal cell (not merged, an image, or a special format)
+- Per the POS source spec, rows 1–5 are discarded and row 6 is the header row
+- Confirm that `sales_date` contains a value that can be converted to a date
+- Confirm that the column names, order, and types of the existing BigQuery table exactly match the list below
+- Since actual production table types may differ from documentation, the loader re-aligns final types against the live BigQuery table schema just before loading — for example, if `product_id` is `INTEGER` in the table, it will be converted to a numeric type before loading
+
+---
+
+## 9. BigQuery Table Column List
+
+Columns are used in the following order:
+
+1. `row_key`
+2. `sales_date`
+3. `product_id`
+4. `store_name`
+5. `category_mid`
+6. `product_name`
+7. `quantity`
+8. `gross_sales`
+9. `discount_amount`
+10. `net_sales`
+11. `supply_amount`
+12. `vat_amount`
+
+---
+
+## Project Structure
+
+```text
+tapshopbar-pos-loader/
+├── directives/
+│   ├── alternate_pos_integration.md
+│   └── load_pos_sales.md
+├── execution/
+│   └── pos_sales_loader.py
+├── samples/
+├── tests/
+│   └── test_pos_sales_loader.py
+├── .env.example
+├── app.py
+├── bigquery_loader.py
+├── etl.py
+├── load_pos_sales.py
+├── README.md
+└── requirements.txt
+```
+
+---
+
+## Notes
+
+- This implementation does not modify the existing BigQuery table schema.
+- `loaded_at` and `source_file_name` are not loaded.
+- Sample Excel files are not included in the repository; place your own file at `samples/sample.xlsx`.
+- Python 3.11 is recommended given the supported range of `google-cloud-bigquery`.
+- The confirmed POS source spec accepts both `.xls` and `.xlsx`; by default the loader looks for `pos/tsd{date}.xlsx` or `pos/tsd{date}.xls`.
+- Rules for alternative POS integration and the proposed staging schema are documented in [directives/alternate_pos_integration.md](/Users/ckp/vibecoding/load-pos-sales/directives/alternate_pos_integration.md).
+- The standard POS table is configured via `BIGQUERY_TABLE`; the SD POS table is configured via `SD_BIGQUERY_TABLE`.
+
+----------
+
+# tapshopbar-pos-loader
+
 탭샵바 POS 데일리 매출 엑셀 파일을 로컬 Python CLI 또는 Streamlit UI로 읽어서, 기존 BigQuery 테이블에 안전하게 append 적재하는 프로젝트입니다. 현재는 기존 POS 포맷과 별도 지점의 대체 POS 포맷을 모두 감지할 수 있습니다.
 
 실제 적재는 `--load`일 때만 수행하며, 기본 동작은 `row_key` 기준 중복을 건너뛰는 `skip` 전략입니다.
